@@ -106,7 +106,8 @@ Manifests are unsigned; publisher text does not constitute a verified signature.
 
 ## Verification
 
-- C++ and Windows Forms builds succeeded without warnings.
+- A fresh source checkout built successfully with MSVC and .NET 8. Windows Forms
+  built without warnings; MSVC reports a standard DeckLink COM type-import warning.
 - 12 OMT loopbacks: all four formats with High/Normal/Low, each 80 video frames
   and 80 stereo audio packets; received dimensions, fps and audio format checked.
 - GUI: device detection, format/quality/audio options, title/version, hidden/show
