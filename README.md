@@ -8,7 +8,7 @@
 
 ![SDI2OMD CONVERTER Windows interface](docs/images/interface.png)
 
-A Windows application by **Peter Aellig**: select a DeckLink input, choose the matching video format and audio channels, then start transmission.
+A Windows application: select a DeckLink input, choose the matching video format and audio channels, then start transmission.
 
 ## Install
 
