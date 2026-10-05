@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>SdiOmt</AssemblyName>
+    <AssemblyTitle>SDI2OMD CONVERTER</AssemblyTitle>
+    <Title>SDI2OMD CONVERTER</Title>
+    <Product>SDI2OMD CONVERTER</Product>
+    <Description>DeckLink SDI to Open Media Transport with video and audio</Description>
+    <Authors>Peter Aellig</Authors>
+    <Company>Peter Aellig</Company>
+    <Copyright>Peter Aellig</Copyright>
+    <Version>1.0.0.4</Version>
+    <AssemblyVersion>1.0.0.4</AssemblyVersion>
+    <FileVersion>1.0.0.4</FileVersion>
+    <InformationalVersion>1.0.0.4</InformationalVersion>
+    <ApplicationIcon>Branding\SDI.ico</ApplicationIcon>
+    <PackageIcon>sdi-omt_logo.png</PackageIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="..\build\Release\sdi_omt.exe" Link="sdi_omt.exe" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\build\Release\libomt.dll" Link="libomt.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\build\Release\libvmx.dll" Link="libvmx.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Update="MainForm.cs"><SubType>Form</SubType></Compile>
+    <Compile Update="MainForm.Designer.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\logo\SDI.ico" LogicalName="SdiOmt.Branding.SDI.ico" />
+    <EmbeddedResource Include="..\logo\sdi-omt_logo.png" LogicalName="SdiOmt.Branding.Logo.png" />
+    <None Include="..\logo\sdi-omt_logo.png" Link="Branding\sdi-omt_logo.png" Pack="true" PackagePath="\" />
+    <Content Include="Branding\SDI.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\third_party\omt\LICENSE.txt" Link="OMT-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="SyncBrandingIcon" BeforeTargets="PrepareForBuild">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\logo\SDI.ico" DestinationFiles="$(MSBuildProjectDirectory)\Branding\SDI.ico" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
+
+
+

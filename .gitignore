@@ -1,0 +1,20 @@
+# Generated builds, installers and Visual Studio state
+/build/
+/publish/
+/gui/bin/
+/gui/obj/
+**/.vs/
+*.user
+*.suo
+CMakeUserPresets.json
+/gui/Branding/SDI.ico
+
+# Local logs/settings and editable artwork
+*.log
+*.psd
+settings.json
+
+# Historical SDK/source downloads
+/third_party/omt.zip
+/third_party/libomt/
+/third_party/libomtnet/
