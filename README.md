@@ -110,7 +110,9 @@ Manifests are unsigned; publisher text does not constitute a verified signature.
 
 Version 1.0.0.5 adds interlaced capture and passed 18 sender starts with one
 persistent receiver, including High/Low quality changes. See [test details](docs/TESTING.md).
-Physical interlaced SDI video and remote/vMix reconnection still require a live source.
+Live 720p50 SDI video/audio also passed six GUI-driven starts and five reconnects
+with one persistent receiver. Physical interlaced SDI video and remote/vMix
+reconnection remain unverified.
 
 - A fresh source checkout built successfully with MSVC and .NET 8. Windows Forms
   built without warnings; MSVC reports a standard DeckLink COM type-import warning.

@@ -23,7 +23,15 @@ One receiver instance was retained across all sender restarts.
 | First fresh video after startup | About 1.0–1.1 seconds locally |
 | Receiver recreated or source reselected | No |
 | GUI-driven DeckLink audio, same six steps | Passed, 30 packets per start |
-| GUI-driven physical SDI video | Unverified: no matching input signal |
+| GUI-driven physical 720p50 SDI video and audio | Passed, six starts / five reconnects, at least 30 video and 30 audio packets per start |
+
+The live 720p50 check was repeated after the SDI source became available on
+6 October 2026. Normal → High → Low → High → Low → Normal succeeded with the
+same receiver instance and source name. Video and audio returned in about
+1.02–1.07 seconds after startup; discovery found the source after every start.
+Observed compressed frame means were approximately 175–176 kB on High,
+99–100 kB on Low and 149–155 kB on Normal. These sizes depend on image content.
+Physical interlaced SDI video remains unverified.
 
 These checks use the bundled OMT receiver SDK on the sender computer. Reception in vMix or another computer needs a check with that actual receiver and a matching live SDI source.
 
