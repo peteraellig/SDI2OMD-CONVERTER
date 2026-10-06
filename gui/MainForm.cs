@@ -54,7 +54,7 @@ public partial class MainForm : Form
         if (logBox.TextLength > 60000) logBox.Text = logBox.Text[^30000..];
         logBox.AppendText(line + Environment.NewLine);
         if (line.StartsWith("Captured=")) {
-            var signal = Regex.Match(line, @"signal=(\d+)");
+            var signal = Regex.Match(line, @"\bsignal=(\d+) connections=");
             var connections = Regex.Match(line, @"connections=(\d+)");
             if (signal.Success && connections.Success)
                 statusLabel.Text = signal.Groups[1].Value == "0" ? "No SDI signal — check input and selected format" :
@@ -167,11 +167,11 @@ public partial class MainForm : Form
     {
         MessageBox.Show(this,
             "SUPPORTED INPUT\n" +
-            "SDI video: 720p50, 720p60, 1080p50 or 1080p60, selected manually.\n" +
+            "SDI video: 720p50, 720p60, 1080p50, 1080p60, 1080i50 or 1080i60, selected manually.\n" +
             "Video capture: 8-bit YUV 4:2:2. Audio: eight embedded SDI input channels, 48 kHz.\nOutput is always two-channel stereo: select Stereo 1&2, 3&4, 5&6 or 7&8.\nMono 1–8 duplicates the selected channel to both left and right (no mixing).\n\n" +
             "FORMAT LIMITATIONS\n" +
             "The input must match the selected format. The application does not auto-sense the SDI format.\n" +
-            "59.94 fps, interlaced video and other formats are not supported by this version. 60 means exactly 60 fps.\n" +
+            "1080i50 = 50 fields / 25 frames per second; 1080i60 = 60 fields / 30 frames per second. Interlacing is preserved.\n59.94 fps/fields and other formats are not supported. 60 means exactly 60.\n" +
             "No format conversion, 10-bit/HDR or eight-channel OMT output.\nOMT quality: High, Normal (OMT Medium) or Low. Higher quality uses more bandwidth.\n\n" +
             "SETUP\n" +
             "Choose an input, format, quality, audio channels and sender name, then press Start transmission.\n" +

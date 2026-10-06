@@ -4,7 +4,7 @@
 
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4.svg)
-![Version](https://img.shields.io/badge/version-1.0.0.4-green.svg)
+![Version](https://img.shields.io/badge/version-1.0.0.5-green.svg)
 
 ![SDI2OMD CONVERTER Windows interface](docs/images/interface.png)
 
@@ -21,7 +21,7 @@ A Windows application by **Peter Aellig**: select a DeckLink input, choose the m
 
 | Setting | Options |
 | --- | --- |
-| Video | 720p50, 720p60, 1080p50, 1080p60 |
+| Video | 720p50, 720p60, 1080p50, 1080p60, 1080i50, 1080i60 |
 | Quality | High, Normal, Low |
 | Stereo | SDI channels 1&2, 3&4, 5&6, 7&8 |
 | Mono | Any channel 1–8, duplicated to left and right |
@@ -51,12 +51,14 @@ Author/publisher: Peter Aellig. Editable Visual Studio form and preserved logo.
 ## Input and quality
 
 Select the DeckLink input, matching video format, OMT quality and sender name.
-Supported manual formats: 720p50, 720p60, 1080p50, 1080p60.
+Supported manual formats: 720p50, 720p60, 1080p50, 1080p60, 1080i50, 1080i60.
 60 means exactly 60 fps, not 59.94. No auto-sense or format conversion.
 Capture is 8-bit UYVY. Eight embedded SDI audio channels are captured at 48 kHz. Select Stereo 1&2, 3&4, 5&6 or 7&8, or Mono 1–8. OMT output is always two-channel planar float audio; mono duplicates the chosen channel to both L and R.
 OMT qualities: High, Normal (= OMT Medium), Low. Quality is explicitly set;
 receivers do not automatically override the selected quality.
-No interlaced video, 59.94 fps, HDR/10-bit or eight-channel OMT output in this version.
+Interlaced capture is preserved: 1080i50 = 50 fields / 25 complete frames per second;
+1080i60 = 60 fields / 30 complete frames per second. No deinterlacing is applied.
+59.94 fps/fields, HDR/10-bit and eight-channel OMT output are not supported.
 The DeckLink device is checked for support before opening the selected format.
 Physical connector mapping is configured in Blackmagic Desktop Video Setup.
 The selected input must be available, not occupied by another application.
@@ -94,21 +96,25 @@ private local subnet. It is never run automatically.
 
 Icon source: logo/SDI.ico, synchronized to gui/Branding/SDI.ico during build.
 Branding logo: logo/sdi-omt_logo.png; user-edited form logo is retained separately.
-Window title: SDI2OMD CONVERTER 1.0.0.4 | Peter Aellig.
+Window title: SDI2OMD CONVERTER 1.0.0.5 | Peter Aellig.
 
 Visual Studio -> Publish -> ClickOnce profile, or scripts/publish-clickonce.cmd.
 Build the C++ engine first after engine changes. Export: publish/ClickOnce/setup.exe.
 Distribute the entire ClickOnce folder, not just setup.exe.
-Version 1.0.0.4 is set in assembly metadata and the deployment manifest.
+Version 1.0.0.5 is set in assembly metadata and the deployment manifest.
 .NET runtime is included (self-contained x64); setup checks Visual C++ runtime.
 Blackmagic Desktop Video must be installed on capture workstations.
 Manifests are unsigned; publisher text does not constitute a verified signature.
 
 ## Verification
 
+Version 1.0.0.5 adds interlaced capture and passed 18 sender starts with one
+persistent receiver, including High/Low quality changes. See [test details](docs/TESTING.md).
+Physical interlaced SDI video and remote/vMix reconnection still require a live source.
+
 - A fresh source checkout built successfully with MSVC and .NET 8. Windows Forms
   built without warnings; MSVC reports a standard DeckLink COM type-import warning.
-- 12 OMT loopbacks: all four formats with High/Normal/Low, each 80 video frames
+- Original 12 progressive OMT loopbacks: all four progressive formats with High/Normal/Low, each 80 video frames
   and 80 stereo audio packets; received dimensions, fps and audio format checked.
 - GUI: device detection, format/quality/audio options, title/version, hidden/show
   list, selftest, start/stop toggle and right-side layout at two window sizes verified.

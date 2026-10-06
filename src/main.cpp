@@ -60,11 +60,11 @@ class Capture : public IDeckLinkInputCallback_v14_2_1 {
     std::atomic<ULONG> refs{1};
     std::mutex mutex; std::condition_variable wake; std::deque<Packet> queue;
     bool stopping=false;
-    Sender& sender; AudioRoute audioRoute; int frameRateN, frameRateD; std::thread worker;
+    Sender& sender; AudioRoute audioRoute; int frameRateN, frameRateD; OMTVideoFlags videoFlags; std::thread worker;
 public:
     std::atomic<uint64_t> captured{0}, sent{0}, dropped{0}, noSignal{0}, noDelivery{0}, errors{0};
     std::atomic<bool> signalPresent{false};
-    Capture(Sender& value, int rateN, int rateD, AudioRoute route):sender(value),audioRoute(route),frameRateN(rateN),frameRateD(rateD),worker([this]{
+    Capture(Sender& value, int rateN, int rateD, AudioRoute route, OMTVideoFlags flags):sender(value),audioRoute(route),frameRateN(rateN),frameRateD(rateD),videoFlags(flags),worker([this]{
         ComScope scope;
         for(;;){Packet packet;
             {std::unique_lock lock(mutex);wake.wait(lock,[this]{return stopping||!queue.empty();});if(stopping&&queue.empty())break;packet=std::move(queue.front());queue.pop_front();}
@@ -90,7 +90,7 @@ public:
                 if(SUCCEEDED(video->GetBytes(&bytes))&&bytes&&SUCCEEDED(video->GetStreamTime(&timestamp,&duration,10000000))){
                     Packet p;p.frame.Type=OMTFrameType_Video;p.frame.Codec=OMTCodec_UYVY;
                     p.frame.Width=video->GetWidth();p.frame.Height=video->GetHeight();p.frame.Stride=video->GetRowBytes();
-                    p.frame.FrameRateN=frameRateN;p.frame.FrameRateD=frameRateD;p.frame.Timestamp=timestamp;p.frame.AspectRatio=16.0f/9;p.frame.ColorSpace=OMTColorSpace_BT709;
+                    p.frame.Flags=videoFlags;p.frame.FrameRateN=frameRateN;p.frame.FrameRateD=frameRateD;p.frame.Timestamp=timestamp;p.frame.AspectRatio=16.0f/9;p.frame.ColorSpace=OMTColorSpace_BT709;
                     p.frame.DataLength=p.frame.Stride*p.frame.Height;
                     auto first=static_cast<unsigned char*>(bytes);p.video.assign(first,first+p.frame.DataLength);++captured;push(std::move(p));
                 }else ++errors;
@@ -114,25 +114,38 @@ void listDevices(){auto all=devices();if(all.empty())throw std::runtime_error("N
 }
 _BMDDisplayMode parseMode(const std::string& mode);
 OMTQuality parseQuality(const std::string& quality);
-void testOMT(const std::string& modeName="720p50",const std::string& qualityName="Normal",int frames=250,const std::string& audioName="Stereo 1&2"){
+bool stopRequested();
+void testOMT(const std::string& modeName="720p50",const std::string& qualityName="Normal",int frames=250,const std::string& audioName="Stereo 1&2",bool loopback=true,const std::string& senderName="SDI OMT Selftest"){
     auto audioRoute=parseAudioRoute(audioName);
-    parseMode(modeName);int width=modeName.starts_with("1080")?1920:1280;int height=width==1920?1080:720;int fps=modeName.ends_with("60")?60:50;
-    if(frames<20||frames>1000)throw std::runtime_error("Selftest frame count must be 20..1000");
-    Sender sender("SDI OMT Selftest",parseQuality(qualityName));char address[1024]{};omt_send_getaddress(sender.handle,address,sizeof(address));
-    auto receiver=omt_receive_create(address,static_cast<OMTFrameType>(OMTFrameType_Video|OMTFrameType_Audio),OMTPreferredVideoFormat_UYVY,OMTReceiveFlags_None);
-    if(!receiver)throw std::runtime_error("OMT receiver creation failed");
-    struct Cleanup{omt_receive_t* handle;~Cleanup(){omt_receive_destroy(handle);}} cleanup{receiver};
-    std::vector<unsigned char> pixels(width*height*2);for(size_t i=0;i<pixels.size();i+=4){pixels[i]=128;pixels[i+1]=80;pixels[i+2]=128;pixels[i+3]=80;}
+    parseMode(modeName);int width=modeName.starts_with("1080")?1920:1280;int height=width==1920?1080:720;bool interlaced=modeName.starts_with("1080i");int fps=(modeName.ends_with("60")?60:50)/(interlaced?2:1);
+    if((loopback&&frames<20)||frames<0||frames>1000)throw std::runtime_error("Selftest frame count must be 20..1000");
+    Sender sender(senderName,parseQuality(qualityName));char address[1024]{};omt_send_getaddress(sender.handle,address,sizeof(address));
+    auto receiver=loopback?omt_receive_create(address,static_cast<OMTFrameType>(OMTFrameType_Video|OMTFrameType_Audio),OMTPreferredVideoFormat_UYVY,OMTReceiveFlags_None):nullptr;
+    if(loopback&&!receiver)throw std::runtime_error("OMT receiver creation failed");
+    struct Cleanup{omt_receive_t* handle;~Cleanup(){if(handle)omt_receive_destroy(handle);}} cleanup{receiver};
+    std::vector<unsigned char> pixels(width*height*2);for(size_t i=0;i<pixels.size();i+=4){
+        // Distinct alternating scanlines prove both fields survive the interlaced codec path.
+        unsigned char luma=interlaced&&((i/(width*2))%2)?160:80;
+        pixels[i]=128;pixels[i+1]=luma;pixels[i+2]=128;pixels[i+3]=luma;
+    }
     std::vector<int32_t> inputAudio((48000/fps)*8);
     for(int i=0;i<48000/fps;++i)for(int channel=0;channel<8;++channel)inputAudio[i*8+channel]=(channel+1)*134217728;
     auto audio=routeAudio(inputAudio.data(),48000/fps,audioRoute);
-    OMTMediaFrame v{};v.Type=OMTFrameType_Video;v.Codec=OMTCodec_UYVY;v.Width=width;v.Height=height;v.Stride=width*2;v.FrameRateN=fps;v.FrameRateD=1;v.AspectRatio=16.f/9;v.ColorSpace=OMTColorSpace_BT709;v.Data=pixels.data();v.DataLength=static_cast<int>(pixels.size());
+    OMTMediaFrame v{};v.Type=OMTFrameType_Video;v.Codec=OMTCodec_UYVY;v.Width=width;v.Height=height;v.Stride=width*2;v.Flags=interlaced?OMTVideoFlags_Interlaced:OMTVideoFlags_None;v.FrameRateN=fps;v.FrameRateD=1;v.AspectRatio=16.f/9;v.ColorSpace=OMTColorSpace_BT709;v.Data=pixels.data();v.DataLength=static_cast<int>(pixels.size());
     OMTMediaFrame a{};a.Type=OMTFrameType_Audio;a.Codec=OMTCodec_FPA1;a.SampleRate=48000;a.Channels=2;a.SamplesPerChannel=48000/fps;a.Data=audio.data();a.DataLength=static_cast<int>(audio.size()*4);
     int receivedVideo=0,receivedAudio=0;
-    for(int i=0;i<frames;++i){v.Timestamp=a.Timestamp=static_cast<int64_t>(i)*10000000/fps;omt_send(sender.handle,&v);omt_send(sender.handle,&a);
-        auto frame=omt_receive(receiver,OMTFrameType_Video,1);
-        if(frame){if(frame->Width!=width||frame->Height!=height||frame->Codec!=OMTCodec_UYVY||frame->FrameRateN!=fps||frame->FrameRateD!=1)throw std::runtime_error("Unexpected loopback video format");++receivedVideo;}
-        frame=omt_receive(receiver,OMTFrameType_Audio,1);if(frame){if(frame->Channels!=2||frame->SampleRate!=48000||frame->SamplesPerChannel<=0||!frame->Data)throw std::runtime_error("Unexpected loopback audio format");
+    if(!loopback)std::cout<<"Sending "<<modeName<<" / "<<qualityName<<" / "<<audioName<<" as "<<address<<". Ctrl+C to stop.\n";
+    for(int i=0;running&&(frames==0||i<frames);++i){if(!loopback&&stopRequested())break;v.Timestamp=a.Timestamp=static_cast<int64_t>(i)*10000000/fps;omt_send(sender.handle,&v);omt_send(sender.handle,&a);
+        auto frame=loopback?omt_receive(receiver,OMTFrameType_Video,1):nullptr;
+        if(frame){if(frame->Width!=width||frame->Height!=height||frame->Codec!=OMTCodec_UYVY||frame->FrameRateN!=fps||frame->FrameRateD!=1||frame->Flags!=v.Flags)throw std::runtime_error("Unexpected loopback video format");
+            if(interlaced){
+                if(!frame->Data||frame->Stride<width*2)throw std::runtime_error("Missing interlaced pixel data");
+                auto data=static_cast<const unsigned char*>(frame->Data);
+                for(int row=height/2;row<height/2+2;++row){int expected=(row%2)?160:80;
+                    if(std::abs(static_cast<int>(data[row*frame->Stride+1])-expected)>4)throw std::runtime_error("Interlaced field/scanline order mismatch");}
+            }
+            ++receivedVideo;}
+        frame=loopback?omt_receive(receiver,OMTFrameType_Audio,1):nullptr;if(frame){if(frame->Channels!=2||frame->SampleRate!=48000||frame->SamplesPerChannel<=0||!frame->Data)throw std::runtime_error("Unexpected loopback audio format");
             auto received=static_cast<float*>(frame->Data);
             const float expectedLeft=(audioRoute.left+1)/16.0f,expectedRight=(audioRoute.right+1)/16.0f;
             for(int sample=0;sample<frame->SamplesPerChannel;++sample)
@@ -141,7 +154,7 @@ void testOMT(const std::string& modeName="720p50",const std::string& qualityName
         std::this_thread::sleep_for(std::chrono::microseconds(1000000/fps));
     }
     std::cout<<"OMT loopback: "<<receivedVideo<<" video frames, "<<receivedAudio<<" audio packets\n";
-    if(receivedVideo<frames/2||receivedAudio<frames/2)throw std::runtime_error("Insufficient loopback frames");
+    if(loopback&&(receivedVideo<frames/2||receivedAudio<frames/2))throw std::runtime_error("Insufficient loopback frames");
 }
 bool stopRequested(){
     HANDLE handle=GetStdHandle(STD_INPUT_HANDLE);
@@ -158,7 +171,9 @@ _BMDDisplayMode parseMode(const std::string& mode){
     if(mode=="720p60")return bmdModeHD720p60;
     if(mode=="1080p50")return bmdModeHD1080p50;
     if(mode=="1080p60")return bmdModeHD1080p6000;
-    throw std::runtime_error("Unsupported mode; choose 720p50, 720p60, 1080p50 or 1080p60");
+    if(mode=="1080i50")return bmdModeHD1080i50;
+    if(mode=="1080i60")return bmdModeHD1080i6000;
+    throw std::runtime_error("Unsupported mode; choose 720p50, 720p60, 1080p50, 1080p60, 1080i50 or 1080i60");
 }
 OMTQuality parseQuality(const std::string& quality){
     if(quality=="High")return OMTQuality_High;
@@ -177,7 +192,8 @@ void runCapture(int index,const std::string& name,int seconds,const std::string&
     long supported=0;_BMDDisplayMode actual=mode;
     check(input->DoesSupportVideoMode(bmdVideoConnectionUnspecified,mode,bmdFormat8BitYUV,bmdNoVideoInputConversion,bmdSupportedVideoModeDefault,&actual,&supported),"Check capture mode");
     if(!supported)throw std::runtime_error("Selected input does not support this mode in 8-bit YUV");
-    Sender sender(name,quality);CComPtr<Capture> callback;callback.Attach(new Capture(sender,static_cast<int>(scale),static_cast<int>(duration),audioRoute));
+    Sender sender(name,quality);CComPtr<Capture> callback;callback.Attach(new Capture(sender,static_cast<int>(scale),static_cast<int>(duration),audioRoute,
+        (display->GetFieldDominance()==bmdUpperFieldFirst||display->GetFieldDominance()==bmdLowerFieldFirst)?OMTVideoFlags_Interlaced:OMTVideoFlags_None));
     struct Stop{IDeckLinkInput_v14_2_1* input;~Stop(){input->StopStreams();input->SetCallback(nullptr);input->DisableAudioInput();input->DisableVideoInput();}} stop{input};
     check(input->EnableVideoInput(mode,bmdFormat8BitYUV,bmdVideoInputFlagDefault),"Enable selected capture mode (port may be occupied)");
     check(input->EnableAudioInput(bmdAudioSampleRate48kHz,bmdAudioSampleType32bitInteger,8),"Enable 8-channel SDI audio input");
@@ -216,10 +232,11 @@ int main(int argc,char** argv){std::cout.setf(std::ios::unitbuf);SetConsoleOutpu
         if(argc==1)interactiveMenu();
         else if(argc==2&&std::string(argv[1])=="--list")listDevices();
         else if(argc>=2&&std::string(argv[1])=="--selftest")testOMT(argc>=3?argv[2]:"720p50",argc>=4?argv[3]:"Normal",argc>=5?std::stoi(argv[4]):250,argc>=6?argv[5]:"Stereo 1&2");
+        else if(argc>=5&&std::string(argv[1])=="--test-source")testOMT(argv[3],argv[4],0,"Stereo 1&2",false,argv[2]);
         else if(argc>=3&&std::string(argv[1])=="--capture"){
             int index=std::stoi(argv[2]);std::string name=argc>=4?argv[3]:"SDI 720p50";int seconds=argc>=5?std::stoi(argv[4]):0;
             if(seconds<0)throw std::runtime_error("Duration must be >= 0");runCapture(index,name,seconds,argc>=6?argv[5]:"720p50",argc>=7?argv[6]:"Normal",argc>=8?argv[7]:"Stereo 1&2");
-        }else{std::cout<<"SDI to OMT / Windows x64\n--list                       Read-only DeckLink enumeration\n--selftest                   OMT video/audio loopback, no capture\n--capture INDEX [NAME] [SEC] [MODE] [QUALITY] [AUDIO]\nModes: 720p50, 720p60, 1080p50, 1080p60. Quality: High, Normal, Low. Stereo output 48kHz. AUDIO: \"Stereo 1&2\", \"Stereo 3&4\", \"Stereo 5&6\", \"Stereo 7&8\", \"Mono 1\" .. \"Mono 8\".\nPort must be free; SEC=0 runs until Ctrl+C. No connector mapping changes.\n";}
+        }else{std::cout<<"SDI to OMT / Windows x64\n--list                       Read-only DeckLink enumeration\n--selftest                   OMT video/audio loopback, no capture\n--capture INDEX [NAME] [SEC] [MODE] [QUALITY] [AUDIO]\nModes: 720p50, 720p60, 1080p50, 1080p60, 1080i50, 1080i60. Quality: High, Normal, Low. Stereo output 48kHz. AUDIO: \"Stereo 1&2\", \"Stereo 3&4\", \"Stereo 5&6\", \"Stereo 7&8\", \"Mono 1\" .. \"Mono 8\".\nPort must be free; SEC=0 runs until Ctrl+C. No connector mapping changes.\n";}
     }catch(const std::exception& e){std::cerr<<e.what()<<"\n";result=1;}
     omt_shutdown();
     if(argc==1&&result!=0){std::cout<<"Enter zum Schliessen..."<<std::flush;std::string line;std::getline(std::cin,line);}

@@ -239,7 +239,7 @@ partial class MainForm
         layout.Controls.Add(nameBox, 1, 2);
         modeLabel.Text = "Video format"; modeLabel.AutoSize = true; modeLabel.Margin = new Padding(0, 7, 12, 0);
         modeBox.Name = "modeBox"; modeBox.DropDownStyle = ComboBoxStyle.DropDownList; modeBox.Width = 130;
-        modeBox.Items.AddRange(new object[] { "720p50", "720p60", "1080p50", "1080p60" });
+        modeBox.Items.AddRange(new object[] { "720p50", "720p60", "1080p50", "1080p60", "1080i50", "1080i60" });
         qualityLabel.Text = "OMT quality"; qualityLabel.AutoSize = true; qualityLabel.Margin = new Padding(24, 7, 12, 0);
         qualityBox.Name = "qualityBox"; qualityBox.DropDownStyle = ComboBoxStyle.DropDownList; qualityBox.Width = 110;
         qualityBox.Items.AddRange(new object[] { "High", "Normal", "Low" });

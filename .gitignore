@@ -3,6 +3,8 @@
 /publish/
 /gui/bin/
 /gui/obj/
+**/bin/
+**/obj/
 **/.vs/
 *.user
 *.suo
