@@ -4,7 +4,7 @@
 
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4.svg)
-![Version](https://img.shields.io/badge/version-1.0.0.5-green.svg)
+![Version](https://img.shields.io/badge/version-1.0.0.6-green.svg)
 
 ![SDI2OMD CONVERTER Windows interface](docs/images/interface.png)
 
@@ -28,6 +28,13 @@ A Windows application: select a DeckLink input, choose the matching video format
 | Audio output | Stereo, 48 kHz, planar float |
 
 Settings are saved automatically. The Start/Stop toggle stays on the left; OMT self-test, Show list, Help and Exit are stacked on the right.
+
+**BM card info** opens a separate device-status window with signal detection,
+detected input format and capture/output use. It refreshes every two seconds
+only while open. **Close** stops all card-status queries. Device numbers follow
+SDK enumeration; physical connector mapping is configured in Desktop Video Setup.
+
+![Blackmagic card information window](docs/images/card-info.png)
 
 **The input must be available in the selected format.** No auto-detection or format conversion.
 
@@ -65,7 +72,10 @@ The selected input must be available, not occupied by another application.
 
 Start transmission toggles to Running — press to stop. It stays enabled while
 capturing; pressing it again stops the engine. Settings are locked while active.
-A missing SDI signal is shown in the status line. Help explains the limitations. Exit is white on IndianRed and asks "Are you sure you want to exit?". Window close also asks; confirmation stops any active transmission.
+The current SDI signal state is shown while diagnostics are open. During capture
+with the list hidden, status updates, log updates and diagnostic counters are
+disabled. Help explains the limitations. Exit asks "Are you sure you want to exit?";
+confirmation stops any active transmission.
 Sender name, device name, video format, quality, audio selection and window size are saved under
 %LOCALAPPDATA%/SdiOmt/settings.json. Missing saved devices require reselection.
 
@@ -73,7 +83,12 @@ Sender name, device name, video format, quality, audio selection and window size
 
 The detailed list is hidden initially. Show list / Hide list toggles it.
 Errors reveal the list automatically; the current signal state stays visible.
-No signal is a cumulative count of missing-input frames, including startup.
+During capture, **Show list** enables diagnostic counting and output; **Hide list**
+disables them again without restarting capture. There is no continuous telemetry
+or card polling in the normal hidden-list capture path. BM card info is a separate,
+explicit request that polls only until its window is closed.
+Counters accumulate only while diagnostics are enabled; hidden intervals are skipped.
+No signal is a cumulative count of missing-input frames observed during those intervals.
 It does not mean signal is currently missing. At 50 fps, 28 frames = 0.56 seconds.
 No delivery counts zero-byte send results, which can mean no matching receiver
 or silent audio. Capture errors count failed frame access/callback processing.
@@ -96,12 +111,12 @@ private local subnet. It is never run automatically.
 
 Icon source: logo/SDI.ico, synchronized to gui/Branding/SDI.ico during build.
 Branding logo: logo/sdi-omt_logo.png; user-edited form logo is retained separately.
-Window title: SDI2OMD CONVERTER 1.0.0.5 | Peter Aellig.
+Window title: SDI2OMD CONVERTER 1.0.0.6 | Peter Aellig.
 
 Visual Studio -> Publish -> ClickOnce profile, or scripts/publish-clickonce.cmd.
 Build the C++ engine first after engine changes. Export: publish/ClickOnce/setup.exe.
 Distribute the entire ClickOnce folder, not just setup.exe.
-Version 1.0.0.5 is set in assembly metadata and the deployment manifest.
+Version 1.0.0.6 is set in assembly metadata and the deployment manifest.
 .NET runtime is included (self-contained x64); setup checks Visual C++ runtime.
 Blackmagic Desktop Video must be installed on capture workstations.
 Manifests are unsigned; publisher text does not constitute a verified signature.

@@ -18,6 +18,7 @@ void check(HRESULT hr, const char* action) {
 }
 struct ComScope { ComScope(){check(CoInitializeEx(nullptr, COINIT_MULTITHREADED), "COM");} ~ComScope(){CoUninitialize();} };
 std::atomic<bool> running{true};
+std::atomic<bool> diagnostics{true};
 BOOL WINAPI consoleHandler(DWORD event) { if(event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT){running=false;return TRUE;}return FALSE; }
 std::string utf8(BSTR text) {
     if(!text)return {};
@@ -69,12 +70,15 @@ public:
         for(;;){Packet packet;
             {std::unique_lock lock(mutex);wake.wait(lock,[this]{return stopping||!queue.empty();});if(stopping&&queue.empty())break;packet=std::move(queue.front());queue.pop_front();}
             packet.frame.Data=packet.frame.Type==OMTFrameType_Video ? static_cast<void*>(packet.video.data()) : static_cast<void*>(packet.audio.data());
-            if(omt_send(sender.handle,&packet.frame)>0){if(packet.frame.Type==OMTFrameType_Video)++sent;}else ++noDelivery;
+            auto delivered=omt_send(sender.handle,&packet.frame);
+            if(diagnostics.load(std::memory_order_relaxed)){
+                if(delivered>0){if(packet.frame.Type==OMTFrameType_Video)++sent;}else ++noDelivery;
+            }
         }
     }){}
     ~Capture(){finish();}
     void finish(){ {std::lock_guard lock(mutex);stopping=true;}wake.notify_all();if(worker.joinable())worker.join();}
-    void push(Packet&& packet){std::lock_guard lock(mutex);if(stopping)return;if(queue.size()>=8){++dropped;return;}queue.push_back(std::move(packet));wake.notify_one();}
+    void push(Packet&& packet){std::lock_guard lock(mutex);if(stopping)return;if(queue.size()>=8){if(diagnostics.load(std::memory_order_relaxed))++dropped;return;}queue.push_back(std::move(packet));wake.notify_one();}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override {
         if(!result)return E_POINTER;*result=nullptr;
         if(iid==IID_IUnknown||iid==__uuidof(IDeckLinkInputCallback_v14_2_1)){*result=static_cast<IDeckLinkInputCallback_v14_2_1*>(this);AddRef();return S_OK;}return E_NOINTERFACE;
@@ -83,18 +87,20 @@ public:
     ULONG STDMETHODCALLTYPE Release() override{auto value=--refs;if(!value)delete this;return value;}
     HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(_BMDVideoInputFormatChangedEvents, IDeckLinkDisplayMode*, _BMDDetectedVideoInputFormatFlags) override{return S_OK;}
     HRESULT STDMETHODCALLTYPE VideoInputFrameArrived(IDeckLinkVideoInputFrame_v14_2_1* video, IDeckLinkAudioInputPacket* audio) override {
+        const bool report=diagnostics.load(std::memory_order_relaxed);
         try {
-            if(video)signalPresent=!(video->GetFlags()&bmdFrameHasNoInputSource);
-            if(video && signalPresent){
+            const bool validSignal=video&&!(video->GetFlags()&bmdFrameHasNoInputSource);
+            if(video&&report)signalPresent.store(validSignal,std::memory_order_relaxed);
+            if(validSignal){
                 void* bytes=nullptr;__int64 timestamp=0,duration=0;
                 if(SUCCEEDED(video->GetBytes(&bytes))&&bytes&&SUCCEEDED(video->GetStreamTime(&timestamp,&duration,10000000))){
                     Packet p;p.frame.Type=OMTFrameType_Video;p.frame.Codec=OMTCodec_UYVY;
                     p.frame.Width=video->GetWidth();p.frame.Height=video->GetHeight();p.frame.Stride=video->GetRowBytes();
                     p.frame.Flags=videoFlags;p.frame.FrameRateN=frameRateN;p.frame.FrameRateD=frameRateD;p.frame.Timestamp=timestamp;p.frame.AspectRatio=16.0f/9;p.frame.ColorSpace=OMTColorSpace_BT709;
                     p.frame.DataLength=p.frame.Stride*p.frame.Height;
-                    auto first=static_cast<unsigned char*>(bytes);p.video.assign(first,first+p.frame.DataLength);++captured;push(std::move(p));
-                }else ++errors;
-            }else if(video)++noSignal;
+                    auto first=static_cast<unsigned char*>(bytes);p.video.assign(first,first+p.frame.DataLength);if(report)++captured;push(std::move(p));
+                }else if(report)++errors;
+            }else if(video&&report)++noSignal;
             if(audio){void* bytes=nullptr;__int64 timestamp=0;auto count=audio->GetSampleFrameCount();
                 if(count>0&&SUCCEEDED(audio->GetBytes(&bytes))&&bytes&&SUCCEEDED(audio->GetPacketTime(&timestamp,10000000))){
                     Packet p;p.frame.Type=OMTFrameType_Audio;p.frame.Codec=OMTCodec_FPA1;p.frame.Timestamp=timestamp;
@@ -103,7 +109,7 @@ public:
                     push(std::move(p));
                 }
             }
-        }catch(...){++errors;}return S_OK;
+        }catch(...){if(report)++errors;}return S_OK;
     }
 };
 void listDevices(){auto all=devices();if(all.empty())throw std::runtime_error("No DeckLink devices found");
@@ -113,6 +119,39 @@ void listDevices(){auto all=devices();if(all.empty())throw std::runtime_error("N
     }
 }
 _BMDDisplayMode parseMode(const std::string& mode);
+std::string jsonString(const std::string& text){
+    std::string result="\"";const char hex[]="0123456789abcdef";
+    for(unsigned char c:text){
+        if(c=='"'||c=='\\'){result+='\\';result+=c;}
+        else if(c<32){result+="\\u00";result+=hex[c>>4];result+=hex[c&15];}
+        else result+=c;
+    }return result+'"';
+}
+// Status queries never enable capture or change connector configuration.
+void deviceStatus(){
+    auto all=devices();std::cout<<'[';
+    for(size_t i=0;i<all.size();++i){
+        if(i)std::cout<<',';
+        CComBSTR name;check(all[i]->GetDisplayName(&name),"Device name");
+        CComPtr<IDeckLinkStatus> status;all[i]->QueryInterface(__uuidof(IDeckLinkStatus),reinterpret_cast<void**>(&status));
+        long locked=0;__int64 busy=0,detected=0;
+        auto lockResult=status?status->GetFlag(bmdDeckLinkStatusVideoInputSignalLocked,&locked):E_NOINTERFACE;
+        auto busyResult=status?status->GetInt(bmdDeckLinkStatusBusy,&busy):E_NOINTERFACE;
+        auto modeResult=status?status->GetInt(bmdDeckLinkStatusDetectedVideoInputMode,&detected):E_NOINTERFACE;
+        std::string mode;
+        if(lockResult==S_OK&&locked&&modeResult==S_OK&&detected!=bmdModeUnknown){
+            CComPtr<IDeckLinkInput_v14_2_1> input;CComPtr<IDeckLinkDisplayMode> display;
+            all[i]->QueryInterface(__uuidof(IDeckLinkInput_v14_2_1),reinterpret_cast<void**>(&input));
+            if(input&&input->GetDisplayMode(static_cast<_BMDDisplayMode>(detected),&display)==S_OK&&display){
+                CComBSTR modeName;if(display->GetName(&modeName)==S_OK)mode=utf8(modeName);
+            }
+        }
+        std::cout<<"{\"index\":"<<i<<",\"name\":"<<jsonString(utf8(name))
+            <<",\"signal\":"<<(lockResult==S_OK?(locked?"true":"false"):"null")
+            <<",\"mode\":"<<(mode.empty()?"null":jsonString(mode))
+            <<",\"busy\":"<<(busyResult==S_OK?std::to_string(busy):"null")<<'}';
+    }std::cout<<"]\n";
+}
 OMTQuality parseQuality(const std::string& quality);
 bool stopRequested();
 void testOMT(const std::string& modeName="720p50",const std::string& qualityName="Normal",int frames=250,const std::string& audioName="Stereo 1&2",bool loopback=true,const std::string& senderName="SDI OMT Selftest"){
@@ -164,7 +203,17 @@ bool stopRequested(){
     if(!available)return false;
     char buffer[256];DWORD read=0;
     if(!ReadFile(handle,buffer,(available < sizeof(buffer) ? available : static_cast<DWORD>(sizeof(buffer))),&read,nullptr))return true;
-    return std::string(buffer,read).find("stop")!=std::string::npos;
+    static std::string pending;
+    pending.append(buffer,read);
+    for(size_t end;(end=pending.find('\n'))!=std::string::npos;){
+        auto command=pending.substr(0,end);pending.erase(0,end+1);
+        if(command.starts_with("\xef\xbb\xbf"))command.erase(0,3);
+        if(!command.empty()&&command.back()=='\r')command.pop_back();
+        if(command=="stop")return true;
+        if(command=="diagnostics on")diagnostics=true;
+        if(command=="diagnostics off")diagnostics=false;
+    }
+    return false;
 }
 _BMDDisplayMode parseMode(const std::string& mode){
     if(mode=="720p50")return bmdModeHD720p50;
@@ -181,7 +230,8 @@ OMTQuality parseQuality(const std::string& quality){
     if(quality=="Low")return OMTQuality_Low;
     throw std::runtime_error("Unsupported quality; choose High, Normal or Low");
 }
-void runCapture(int index,const std::string& name,int seconds,const std::string& modeName="720p50",const std::string& qualityName="Normal",const std::string& audioName="Stereo 1&2"){
+void runCapture(int index,const std::string& name,int seconds,const std::string& modeName="720p50",const std::string& qualityName="Normal",const std::string& audioName="Stereo 1&2",bool reportDiagnostics=true){
+    diagnostics=reportDiagnostics;
     auto audioRoute=parseAudioRoute(audioName);
     auto mode=parseMode(modeName);auto quality=parseQuality(qualityName);
     auto all=devices();if(index<0||index>=static_cast<int>(all.size()))throw std::runtime_error("Invalid device index; use --list");
@@ -200,7 +250,7 @@ void runCapture(int index,const std::string& name,int seconds,const std::string&
     check(input->SetCallback(callback),"Set callback");check(input->StartStreams(),"Start streams");
     char address[1024]{};omt_send_getaddress(sender.handle,address,sizeof(address));
     std::cout<<"Sending "<<modeName<<" / "<<qualityName<<" / "<<audioName<<" as "<<address<<". Ctrl+C to stop.\n";
-    for(int elapsed=0;running&&(seconds==0||elapsed<seconds);++elapsed){for(int tick=0;tick<10&&running;++tick){if(stopRequested()){running=false;break;}std::this_thread::sleep_for(std::chrono::milliseconds(100));}std::cout<<"Captured="<<callback->captured<<" sent="<<callback->sent<<" queue drops="<<callback->dropped<<" no signal="<<callback->noSignal<<" no delivery="<<callback->noDelivery<<" capture errors="<<callback->errors<<" signal="<<(callback->signalPresent?1:0)<<" connections="<<omt_send_connections(sender.handle)<<"\n";}
+    for(int elapsed=0;running&&(seconds==0||elapsed<seconds);++elapsed){for(int tick=0;tick<10&&running;++tick){if(stopRequested()){running=false;break;}std::this_thread::sleep_for(std::chrono::milliseconds(100));}if(diagnostics)std::cout<<"Captured="<<callback->captured<<" sent="<<callback->sent<<" queue drops="<<callback->dropped<<" no signal="<<callback->noSignal<<" no delivery="<<callback->noDelivery<<" capture errors="<<callback->errors<<" signal="<<(callback->signalPresent?1:0)<<" connections="<<omt_send_connections(sender.handle)<<"\n";}
     input->StopStreams();input->SetCallback(nullptr);callback->finish();
 }
 void interactiveMenu(){
@@ -231,11 +281,12 @@ int main(int argc,char** argv){std::cout.setf(std::ios::unitbuf);SetConsoleOutpu
     try{ComScope scope;
         if(argc==1)interactiveMenu();
         else if(argc==2&&std::string(argv[1])=="--list")listDevices();
+        else if(argc==2&&std::string(argv[1])=="--status")deviceStatus();
         else if(argc>=2&&std::string(argv[1])=="--selftest")testOMT(argc>=3?argv[2]:"720p50",argc>=4?argv[3]:"Normal",argc>=5?std::stoi(argv[4]):250,argc>=6?argv[5]:"Stereo 1&2");
         else if(argc>=5&&std::string(argv[1])=="--test-source")testOMT(argv[3],argv[4],0,"Stereo 1&2",false,argv[2]);
         else if(argc>=3&&std::string(argv[1])=="--capture"){
             int index=std::stoi(argv[2]);std::string name=argc>=4?argv[3]:"SDI 720p50";int seconds=argc>=5?std::stoi(argv[4]):0;
-            if(seconds<0)throw std::runtime_error("Duration must be >= 0");runCapture(index,name,seconds,argc>=6?argv[5]:"720p50",argc>=7?argv[6]:"Normal",argc>=8?argv[7]:"Stereo 1&2");
+            if(seconds<0)throw std::runtime_error("Duration must be >= 0");runCapture(index,name,seconds,argc>=6?argv[5]:"720p50",argc>=7?argv[6]:"Normal",argc>=8?argv[7]:"Stereo 1&2",!(argc>=9&&std::string(argv[8])=="--quiet"));
         }else{std::cout<<"SDI to OMT / Windows x64\n--list                       Read-only DeckLink enumeration\n--selftest                   OMT video/audio loopback, no capture\n--capture INDEX [NAME] [SEC] [MODE] [QUALITY] [AUDIO]\nModes: 720p50, 720p60, 1080p50, 1080p60, 1080i50, 1080i60. Quality: High, Normal, Low. Stereo output 48kHz. AUDIO: \"Stereo 1&2\", \"Stereo 3&4\", \"Stereo 5&6\", \"Stereo 7&8\", \"Mono 1\" .. \"Mono 8\".\nPort must be free; SEC=0 runs until Ctrl+C. No connector mapping changes.\n";}
     }catch(const std::exception& e){std::cerr<<e.what()<<"\n";result=1;}
     omt_shutdown();

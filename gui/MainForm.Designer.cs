@@ -26,6 +26,7 @@ partial class MainForm
     private Button testButton = null!;
     private Label statusLabel = null!;
     private TextBox logBox = null!;
+    private Button cardInfoButton = null!;
     private TableLayoutPanel layout = null!;
     private FlowLayoutPanel buttons = null!;
     private FlowLayoutPanel actionButtons = null!;
@@ -52,6 +53,7 @@ partial class MainForm
         testButton = new Button(); logButton = new Button(); exitButton = new Button();
         statusLabel = new Label();
         logBox = new TextBox();
+        cardInfoButton = new Button();
         layout = new TableLayoutPanel();
         buttons = new FlowLayoutPanel();
         actionButtons = new FlowLayoutPanel();
@@ -255,7 +257,7 @@ partial class MainForm
         layout.Controls.Add(formatLabel, 0, 5);
         layout.Controls.Add(buttons, 0, 6);
         layout.Controls.Add(statusLabel, 0, 7);
-        layout.Controls.Add(logBox, 0, 8);
+                layout.Controls.Add(logBox, 0, 8);
         layout.Dock = DockStyle.Fill;
         layout.Location = new Point(0, 64);
         layout.Name = "layout";
@@ -301,7 +303,13 @@ partial class MainForm
         actionButtons.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         actionButtons.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         actionButtons.Margin = new Padding(12, 3, 3, 3);
+        cardInfoButton.Name = "cardInfoButton"; cardInfoButton.Text = "BM card info";
+        cardInfoButton.BackColor = Color.White; cardInfoButton.ForeColor = Color.FromArgb(33, 37, 41);
+        cardInfoButton.FlatStyle = FlatStyle.Flat; cardInfoButton.UseVisualStyleBackColor = false;
+        cardInfoButton.Click += CardInfoButton_Click;
+        cardInfoButton.Size = new Size(125, 41); cardInfoButton.Margin = new Padding(0, 0, 0, 6);
         actionButtons.Controls.Add(testButton);
+        actionButtons.Controls.Add(cardInfoButton);
         actionButtons.Controls.Add(logButton);
         actionButtons.Controls.Add(helpButton);
         actionButtons.Controls.Add(exitButton);
@@ -333,7 +341,7 @@ partial class MainForm
         Controls.Add(headerPanel);
         Font = new Font("Segoe UI", 9F);
         Icon = (Icon?)resources.GetObject("$this.Icon");
-        MinimumSize = new Size(700, 460);
+        MinimumSize = new Size(700, 500);
         Name = "MainForm";
         StartPosition = FormStartPosition.CenterScreen;
         Text = "SDI2OMD CONVERTER";

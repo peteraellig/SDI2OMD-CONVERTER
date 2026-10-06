@@ -1,4 +1,17 @@
-# Verification: 1.0.0.5
+# Verification: 1.0.0.6
+
+## On-demand diagnostics and card information
+
+- Capture starts with diagnostics disabled when the list is hidden.
+- No ongoing counter output or status/log updates were observed while hidden.
+- BM card info displayed four devices, live 720p50 signal, detected format,
+  capture use on Duo (1) and output use on Duo (2).
+- The card-info window refreshed while open. Close stopped the timer and all
+  helper processes; no further refreshes occurred afterward.
+- Show list enabled live diagnostics; Hide list disabled them again during capture.
+- 567 video frames and 578 audio packets were received continuously during the
+  GUI test, including opening/closing card info and toggling diagnostics.
+- No change to the encoder quality or media queue was introduced by this feature.
 
 ## Interlaced support
 

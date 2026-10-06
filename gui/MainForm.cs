@@ -11,6 +11,7 @@ public partial class MainForm : Form
     private bool settingsReady;
     private AppSettings settings = new();
     private readonly string enginePath = Path.Combine(AppContext.BaseDirectory, "sdi_omt.exe");
+    private CardInfoForm? cardInfo;
     private record Device(int Index, string Name) { public override string ToString() => Name; }
     public MainForm()
     {
@@ -51,6 +52,7 @@ public partial class MainForm : Form
     {
         if (IsDisposed || Disposing) return;
         if (InvokeRequired) { BeginInvoke(new Action(() => AppendLog(line))); return; }
+        if (busy && !logBox.Visible && line.StartsWith("Captured=")) return;
         if (logBox.TextLength > 60000) logBox.Text = logBox.Text[^30000..];
         logBox.AppendText(line + Environment.NewLine);
         if (line.StartsWith("Captured=")) {
@@ -61,7 +63,7 @@ public partial class MainForm : Form
                     connections.Groups[1].Value == "0" ? "SDI signal present — waiting for OMT receiver" :
                     "SDI signal present · OMT active · " + connections.Groups[1].Value + " network connections";
         }
-        if (line.StartsWith("Error:")) { logBox.Visible = true; logButton.Text = "Hide list"; }
+        if (line.StartsWith("Error:")) { logBox.Visible = true; logButton.Text = "Hide list"; _ = SetEngineDiagnosticsAsync(); }
     }
     private Process NewEngine(params string[] args)
     {
@@ -70,7 +72,7 @@ public partial class MainForm : Form
             UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
-            StandardInputEncoding = Encoding.UTF8,
+            StandardInputEncoding = new UTF8Encoding(false),
             WorkingDirectory = AppContext.BaseDirectory
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
@@ -79,6 +81,7 @@ public partial class MainForm : Form
     private void SetBusy(bool value, bool canStop = false)
     {
         busy = value;
+        statusLabel.Visible = !value || logBox.Visible;
         startButton.Enabled = canStop || (!value && deviceBox.SelectedItem is Device);
         startButton.Text = canStop ? "Running — press to stop" : value ? "Please wait …" : "Start transmission";
         startButton.BackColor = canStop ? Color.FromArgb(190, 65, 55) : Color.FromArgb(35, 125, 75);
@@ -119,7 +122,7 @@ public partial class MainForm : Form
         SaveSettings(); SetBusy(true); logBox.Clear(); statusLabel.Text = selftest ? "OMT self-test is running …" : "Starting transmission …";
         try {
             var device = deviceBox.SelectedItem as Device;
-            using var process = selftest ? NewEngine("--selftest", modeBox.SelectedItem!.ToString()!, qualityBox.SelectedItem!.ToString()!, "250", audioBox.SelectedItem!.ToString()!) : NewEngine("--capture", device!.Index.ToString(), nameBox.Text.Trim(), "0", modeBox.SelectedItem!.ToString()!, qualityBox.SelectedItem!.ToString()!, audioBox.SelectedItem!.ToString()!);
+            using var process = selftest ? NewEngine("--selftest", modeBox.SelectedItem!.ToString()!, qualityBox.SelectedItem!.ToString()!, "250", audioBox.SelectedItem!.ToString()!) : NewEngine("--capture", device!.Index.ToString(), nameBox.Text.Trim(), "0", modeBox.SelectedItem!.ToString()!, qualityBox.SelectedItem!.ToString()!, audioBox.SelectedItem!.ToString()!, logBox.Visible ? "--diagnostics" : "--quiet");
             engine = process;
             process.OutputDataReceived += (_, e) => { if (e.Data is not null) AppendLog(e.Data); };
             process.ErrorDataReceived += (_, e) => { if (e.Data is not null) AppendLog("Error: " + e.Data); };
@@ -157,11 +160,31 @@ public partial class MainForm : Form
         else await RunEngineAsync(false);
     }
     private async void TestButton_Click(object? sender, EventArgs e) => await RunEngineAsync(true);
+    private void CardInfoButton_Click(object? sender, EventArgs e)
+    {
+        if (cardInfo is null || cardInfo.IsDisposed) { cardInfo = new CardInfoForm(enginePath); cardInfo.Show(this); }
+        else cardInfo.Activate();
+    }
     private void ExitButton_Click(object? sender, EventArgs e) => Close();
-    private void LogButton_Click(object? sender, EventArgs e)
+    private async Task SetEngineDiagnosticsAsync()
+    {
+        statusLabel.Visible = !busy || logBox.Visible;
+        var process = engine;
+        if (process is null) return;
+        try
+        {
+            if (process.HasExited) return;
+            await process.StandardInput.WriteLineAsync(logBox.Visible ? "diagnostics on" : "diagnostics off");
+            await process.StandardInput.FlushAsync();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or ObjectDisposedException) { }
+    }
+    private async void LogButton_Click(object? sender, EventArgs e)
     {
         logBox.Visible = !logBox.Visible;
+        if (logBox.Visible && Height < 740) Height = 740;
         logButton.Text = logBox.Visible ? "Hide list" : "Show list";
+        await SetEngineDiagnosticsAsync();
     }
     private void HelpButton_Click(object? sender, EventArgs e)
     {
@@ -174,6 +197,7 @@ public partial class MainForm : Form
             "1080i50 = 50 fields / 25 frames per second; 1080i60 = 60 fields / 30 frames per second. Interlacing is preserved.\n59.94 fps/fields and other formats are not supported. 60 means exactly 60.\n" +
             "No format conversion, 10-bit/HDR or eight-channel OMT output.\nOMT quality: High, Normal (OMT Medium) or Low. Higher quality uses more bandwidth.\n\n" +
             "SETUP\n" +
+            "BM card info shows signal detection, detected format and capture/output use only while its window is open.\nNumbers follow DeckLink device order; physical connector mapping is set in Desktop Video Setup.\nUnavailable means the driver did not supply that status; Not detected is the driver's current input-lock status.\n\n" +
             "Choose an input, format, quality, audio channels and sender name, then press Start transmission.\n" +
             "Press Running — press to stop to stop. The input must be free.\n" +
             "Physical SDI port mapping is configured in Blackmagic Desktop Video Setup.\n" +
@@ -184,7 +208,7 @@ public partial class MainForm : Form
             "A new sender can use a different TCP port if another OMT source is already running.\n\n" +
             "SELF-TEST\n" +
             "OMT self-test checks local synthetic video/audio at the selected format, quality and audio routing. Each output sample is checked.\n" +
-            "It does not capture SDI or test reception on another PC.\n\nDIAGNOSTICS\nShow list reveals the detailed log. Counters are totals since capture started.\nNo signal counts missing-input frames, including startup. It does not mean current signal loss.\nNo delivery counts send calls with zero bytes delivered, including no matching receiver or silent audio. It is not an error count.\nNetwork connections are TCP connections, not the number of viewers.\nCurrent signal state is shown above the list; errors reveal the list automatically.",
+            "It does not capture SDI or test reception on another PC.\n\nDIAGNOSTICS\nDuring capture, hidden diagnostics stop status updates, logging and diagnostic counters.\nShow list enables diagnostics; Hide list disables them again. Counters accumulate only while diagnostics are enabled.\nNo signal counts missing-input frames while diagnostics are active, not current signal loss.\nNo delivery counts zero-byte sends, including no matching receiver or silent audio.\nNetwork connections are TCP channels, not viewer counts. Errors reveal the list automatically.\nBM card info polls only while its window is open; Close stops all card-status polling.",
             "SDI2OMD CONVERTER — Help", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
     private async void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
@@ -198,6 +222,7 @@ public partial class MainForm : Form
             exitConfirmed = true;
         }
         SaveSettings();
+        cardInfo?.Close();
         if (busy) {
             e.Cancel = true;
             if (engine is null) return;
