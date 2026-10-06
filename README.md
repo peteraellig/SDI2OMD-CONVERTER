@@ -4,7 +4,7 @@
 
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4.svg)
-![Version](https://img.shields.io/badge/version-1.0.0.6-green.svg)
+![Version](https://img.shields.io/badge/version-1.0.0.7-green.svg)
 
 ![SDI2OMD CONVERTER Windows interface](docs/images/interface.png)
 
@@ -111,12 +111,12 @@ private local subnet. It is never run automatically.
 
 Icon source: logo/SDI.ico, synchronized to gui/Branding/SDI.ico during build.
 Branding logo: logo/sdi-omt_logo.png; user-edited form logo is retained separately.
-Window title: SDI2OMD CONVERTER 1.0.0.6 | Peter Aellig.
+Window title: SDI2OMD CONVERTER 1.0.0.7 | Peter Aellig.
 
 Visual Studio -> Publish -> ClickOnce profile, or scripts/publish-clickonce.cmd.
 Build the C++ engine first after engine changes. Export: publish/ClickOnce/setup.exe.
 Distribute the entire ClickOnce folder, not just setup.exe.
-Version 1.0.0.6 is set in assembly metadata and the deployment manifest.
+Version 1.0.0.7 is set in assembly metadata and the deployment manifest.
 .NET runtime is included (self-contained x64); setup checks Visual C++ runtime.
 Blackmagic Desktop Video must be installed on capture workstations.
 Manifests are unsigned; publisher text does not constitute a verified signature.
