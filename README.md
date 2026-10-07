@@ -4,7 +4,7 @@
 
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4.svg)
-![Version](https://img.shields.io/badge/version-1.0.0.8-green.svg)
+![Version](https://img.shields.io/badge/version-1.0.0.9-green.svg)
 
 ![SDI2OMD CONVERTER Windows interface](docs/images/interface.png)
 
@@ -102,17 +102,22 @@ private local subnet. It is never run automatically.
 
 Icon source: logo/SDI.ico, synchronized to gui/Branding/SDI.ico during build.
 Branding logo: logo/sdi-omt_logo.png; user-edited form logo is retained separately.
-Window title: SDI2OMD CONVERTER 1.0.0.8 | Peter Aellig.
+Window title: SDI2OMD CONVERTER 1.0.0.9 | Peter Aellig.
 
 Visual Studio -> Publish -> ClickOnce profile, or scripts/publish-clickonce.cmd.
 Build the C++ engine first after engine changes. Export: publish/ClickOnce/setup.exe.
 Distribute the entire ClickOnce folder, not just setup.exe.
-Version 1.0.0.8 is set in assembly metadata and the deployment manifest.
+Version 1.0.0.9 is set in assembly metadata and the deployment manifest.
 .NET runtime is included (self-contained x64); setup checks Visual C++ runtime.
 Blackmagic Desktop Video must be installed on capture workstations.
 Manifests are unsigned; publisher text does not constitute a verified signature.
+ClickOnce requests full trust for the .NET launcher and native capture libraries;
+the application still runs as the current user without administrator elevation.
+The publish script checks the manifest and required startup files before declaring success.
 
 ## Verification
+
+Version 1.0.0.9 fixes a silent ClickOnce launch failure caused by the previous partial-trust manifest. The corrected full-trust test installation started successfully through the installed desktop shortcut. The manifest check accepts the corrected package and rejects the previous installer.
 
 Version 1.0.0.8 adds the bounded video/audio queue and live health displays. Queue/expiry tests, health-window tests and a 25-frame synthetic loopback passed. Live 720p50 capture passed six GUI-driven starts / five reconnects and 30 seconds each at Normal, High and Low with a changing test-picture source. Received timestamps had no video/audio gaps; one internal queued picture was discarded at Normal. The source supplied silent audio; audible sound under CPU saturation remains unverified.
 

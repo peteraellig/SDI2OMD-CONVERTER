@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(sdi_omt VERSION 1.0.0.8 LANGUAGES CXX)
+project(sdi_omt VERSION 1.0.0.9 LANGUAGES CXX)
 if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Windows MSVC x64 required")
 endif()

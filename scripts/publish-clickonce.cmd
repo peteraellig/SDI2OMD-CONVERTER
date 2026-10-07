@@ -13,5 +13,11 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+powershell.exe -NoProfile -File "%~dp0check-clickonce.ps1" -PublishDirectory "%~dp0..\publish\ClickOnce"
+if errorlevel 1 (
+  echo ClickOnce-Startpruefung fehlgeschlagen.
+  pause
+  exit /b 1
+)
 echo Fertig: %~dp0..\publish\ClickOnce\setup.exe
 pause
