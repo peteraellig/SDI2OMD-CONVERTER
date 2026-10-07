@@ -2,6 +2,8 @@
 #include <atlbase.h>
 #import "C:\Program Files\Blackmagic Design\Blackmagic Desktop Video\DeckLinkAPI64.dll" raw_interfaces_only raw_native_types no_namespace named_guids
 #include "libomt.h"
+#include "low_latency_queue.h"
+#include <limits>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -59,26 +61,43 @@ std::vector<float> routeAudio(const int32_t* samples,int count,AudioRoute route)
 struct Packet { OMTMediaFrame frame{}; std::vector<unsigned char> video; std::vector<float> audio; };
 class Capture : public IDeckLinkInputCallback_v14_2_1 {
     std::atomic<ULONG> refs{1};
-    std::mutex mutex; std::condition_variable wake; std::deque<Packet> queue;
-    bool stopping=false;
-    Sender& sender; AudioRoute audioRoute; int frameRateN, frameRateD; OMTVideoFlags videoFlags; std::thread worker;
+    LowLatencyQueue<Packet> queue;
+    Sender& sender; AudioRoute audioRoute; int frameRateN, frameRateD; OMTVideoFlags videoFlags;
+    std::mutex failureMutex; std::string failure;
+    std::atomic<int64_t> previousVideo{-1};
 public:
-    std::atomic<uint64_t> captured{0}, sent{0}, dropped{0}, noSignal{0}, noDelivery{0}, errors{0};
+    std::atomic<uint64_t> captured{0}, sent{0}, captureGaps{0}, noSignal{0}, noDelivery{0}, errors{0}, sendErrors{0};
     std::atomic<bool> signalPresent{false};
-    Capture(Sender& value, int rateN, int rateD, AudioRoute route, OMTVideoFlags flags):sender(value),audioRoute(route),frameRateN(rateN),frameRateD(rateD),videoFlags(flags),worker([this]{
+    std::atomic<int64_t> lastVideoArrival{0}, lastSendFinished{0}, encodingSince{0};
+    std::atomic<int> lastEncodeMs{0};
+    std::atomic<bool> failed{false};
+private:
+    std::thread worker;
+public:
+    static int64_t nowMs(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();}
+    Capture(Sender& value, int rateN, int rateD, AudioRoute route, OMTVideoFlags flags):
+        queue(std::chrono::microseconds((2000000ll*rateD+rateN-1)/rateN)),sender(value),audioRoute(route),frameRateN(rateN),frameRateD(rateD),videoFlags(flags){
+        // Start only after all counters and state have been constructed.
+        worker=std::thread([this]{try {
         ComScope scope;
-        for(;;){Packet packet;
-            {std::unique_lock lock(mutex);wake.wait(lock,[this]{return stopping||!queue.empty();});if(stopping&&queue.empty())break;packet=std::move(queue.front());queue.pop_front();}
+        while(auto next=queue.wait()){Packet packet=std::move(*next);
             packet.frame.Data=packet.frame.Type==OMTFrameType_Video ? static_cast<void*>(packet.video.data()) : static_cast<void*>(packet.audio.data());
+            auto begin=nowMs();encodingSince.store(begin,std::memory_order_relaxed);
             auto delivered=omt_send(sender.handle,&packet.frame);
-            if(diagnostics.load(std::memory_order_relaxed)){
-                if(delivered>0){if(packet.frame.Type==OMTFrameType_Video)++sent;}else ++noDelivery;
-            }
+            auto end=nowMs();lastEncodeMs.store(static_cast<int>(end-begin),std::memory_order_relaxed);
+            lastSendFinished.store(end,std::memory_order_relaxed);encodingSince.store(0,std::memory_order_relaxed);
+            if(delivered>0){if(packet.frame.Type==OMTFrameType_Video)++sent;}
+            else if(delivered==0)++noDelivery; // No receiver or silent audio is not an error.
+            else {++sendErrors;throw std::runtime_error("OMT send failed; transmission stopped");}
         }
-    }){}
+        }catch(const std::exception& e){fail(e.what());}catch(...){fail("Unexpected encoder failure; transmission stopped");}});
+    }
     ~Capture(){finish();}
-    void finish(){ {std::lock_guard lock(mutex);stopping=true;}wake.notify_all();if(worker.joinable())worker.join();}
-    void push(Packet&& packet){std::lock_guard lock(mutex);if(stopping)return;if(queue.size()>=8){if(diagnostics.load(std::memory_order_relaxed))++dropped;return;}queue.push_back(std::move(packet));wake.notify_one();}
+    void fail(const std::string& message){{std::lock_guard lock(failureMutex);failure=message;}failed=true;queue.close();running=false;}
+    std::string failureMessage(){std::lock_guard lock(failureMutex);return failure;}
+    void finish(){queue.close();if(worker.joinable())worker.join();}
+    auto queueStats(){return queue.stats();}
+    void push(Packet&& packet){bool video=packet.frame.Type==OMTFrameType_Video;auto timestamp=packet.frame.Timestamp;auto samples=packet.frame.SamplesPerChannel;queue.push(std::move(packet),video,timestamp,samples);}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override {
         if(!result)return E_POINTER;*result=nullptr;
         if(iid==IID_IUnknown||iid==__uuidof(IDeckLinkInputCallback_v14_2_1)){*result=static_cast<IDeckLinkInputCallback_v14_2_1*>(this);AddRef();return S_OK;}return E_NOINTERFACE;
@@ -87,29 +106,40 @@ public:
     ULONG STDMETHODCALLTYPE Release() override{auto value=--refs;if(!value)delete this;return value;}
     HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(_BMDVideoInputFormatChangedEvents, IDeckLinkDisplayMode*, _BMDDetectedVideoInputFormatFlags) override{return S_OK;}
     HRESULT STDMETHODCALLTYPE VideoInputFrameArrived(IDeckLinkVideoInputFrame_v14_2_1* video, IDeckLinkAudioInputPacket* audio) override {
-        const bool report=diagnostics.load(std::memory_order_relaxed);
         try {
+            if(failed)return S_OK;
             const bool validSignal=video&&!(video->GetFlags()&bmdFrameHasNoInputSource);
-            if(video&&report)signalPresent.store(validSignal,std::memory_order_relaxed);
-            if(validSignal){
+            if(video)signalPresent.store(validSignal,std::memory_order_relaxed);
+            if(validSignal){try {
                 void* bytes=nullptr;__int64 timestamp=0,duration=0;
-                if(SUCCEEDED(video->GetBytes(&bytes))&&bytes&&SUCCEEDED(video->GetStreamTime(&timestamp,&duration,10000000))){
+                if(SUCCEEDED(video->GetBytes(&bytes))&&bytes&&SUCCEEDED(video->GetStreamTime(&timestamp,&duration,10000000))&&duration>0){
                     Packet p;p.frame.Type=OMTFrameType_Video;p.frame.Codec=OMTCodec_UYVY;
                     p.frame.Width=video->GetWidth();p.frame.Height=video->GetHeight();p.frame.Stride=video->GetRowBytes();
+                    if(p.frame.Width<=0||p.frame.Width>4096||p.frame.Height<=0||p.frame.Height>2160||p.frame.Stride<p.frame.Width*2||p.frame.Stride>std::numeric_limits<int>::max()/p.frame.Height)
+                        throw std::runtime_error("Invalid captured video buffer");
                     p.frame.Flags=videoFlags;p.frame.FrameRateN=frameRateN;p.frame.FrameRateD=frameRateD;p.frame.Timestamp=timestamp;p.frame.AspectRatio=16.0f/9;p.frame.ColorSpace=OMTColorSpace_BT709;
                     p.frame.DataLength=p.frame.Stride*p.frame.Height;
-                    auto first=static_cast<unsigned char*>(bytes);p.video.assign(first,first+p.frame.DataLength);if(report)++captured;push(std::move(p));
-                }else if(report)++errors;
-            }else if(video&&report)++noSignal;
+                    auto previous=previousVideo.exchange(timestamp,std::memory_order_relaxed);
+                    if(previous>=0&&timestamp>previous+duration+duration/2)captureGaps+=static_cast<uint64_t>((timestamp-previous+duration/2)/duration-1);
+                    auto first=static_cast<unsigned char*>(bytes);p.video.assign(first,first+p.frame.DataLength);++captured;
+                    lastVideoArrival.store(nowMs(),std::memory_order_relaxed);push(std::move(p));
+                }else ++errors;
+            }catch(const std::bad_alloc&){throw;}catch(...){++errors;}
+            }else if(video){++noSignal;previousVideo=-1;queue.clearVideo();}
             if(audio){void* bytes=nullptr;__int64 timestamp=0;auto count=audio->GetSampleFrameCount();
-                if(count>0&&SUCCEEDED(audio->GetBytes(&bytes))&&bytes&&SUCCEEDED(audio->GetPacketTime(&timestamp,10000000))){
+                if(count>0&&count<=48000&&SUCCEEDED(audio->GetBytes(&bytes))&&bytes&&SUCCEEDED(audio->GetPacketTime(&timestamp,10000000))){
+                    // A large driver audio packet is trimmed from the front,
+                    // preserving the freshest 120 ms and its original time.
+                    int skipped=count>5760 ? static_cast<int>(count)-5760 : 0;
+                    if(skipped){queue.discardAudioSamples(skipped);timestamp+=static_cast<int64_t>(skipped)*10000000/48000;count-=skipped;}
                     Packet p;p.frame.Type=OMTFrameType_Audio;p.frame.Codec=OMTCodec_FPA1;p.frame.Timestamp=timestamp;
                     p.frame.SampleRate=48000;p.frame.Channels=2;p.frame.SamplesPerChannel=count;p.frame.DataLength=count*2*4;
-                    p.audio=routeAudio(static_cast<int32_t*>(bytes),count,audioRoute);
+                    p.audio=routeAudio(static_cast<int32_t*>(bytes)+skipped*8,count,audioRoute);
                     push(std::move(p));
-                }
+                }else if(count>0)++errors;
             }
-        }catch(...){if(report)++errors;}return S_OK;
+        }catch(const std::bad_alloc&){++errors;fail("Capture ran out of memory; transmission stopped");}
+        catch(...){++errors;}return S_OK;
     }
 };
 void listDevices(){auto all=devices();if(all.empty())throw std::runtime_error("No DeckLink devices found");
@@ -250,8 +280,26 @@ void runCapture(int index,const std::string& name,int seconds,const std::string&
     check(input->SetCallback(callback),"Set callback");check(input->StartStreams(),"Start streams");
     char address[1024]{};omt_send_getaddress(sender.handle,address,sizeof(address));
     std::cout<<"Sending "<<modeName<<" / "<<qualityName<<" / "<<audioName<<" as "<<address<<". Ctrl+C to stop.\n";
-    for(int elapsed=0;running&&(seconds==0||elapsed<seconds);++elapsed){for(int tick=0;tick<10&&running;++tick){if(stopRequested()){running=false;break;}std::this_thread::sleep_for(std::chrono::milliseconds(100));}if(diagnostics)std::cout<<"Captured="<<callback->captured<<" sent="<<callback->sent<<" queue drops="<<callback->dropped<<" no signal="<<callback->noSignal<<" no delivery="<<callback->noDelivery<<" capture errors="<<callback->errors<<" signal="<<(callback->signalPresent?1:0)<<" connections="<<omt_send_connections(sender.handle)<<"\n";}
+    const auto started=Capture::nowMs();
+    for(int elapsed=0;running&&(seconds==0||elapsed<seconds);++elapsed){
+        for(int tick=0;tick<10&&running;++tick){if(stopRequested()){running=false;break;}std::this_thread::sleep_for(std::chrono::milliseconds(100));}
+        auto state=callback->queueStats();auto now=Capture::nowMs();
+        auto videoArrival=callback->lastVideoArrival.load();auto sendFinished=callback->lastSendFinished.load();auto encoding=callback->encodingSince.load();
+        auto connections=omt_send_connections(sender.handle);
+        // One compact sample per second; no frame-by-frame logging or polling.
+        std::cout<<"Health={\"uptimeMs\":"<<now-started<<",\"captured\":"<<callback->captured
+            <<",\"sent\":"<<callback->sent<<",\"videoLost\":"<<state.videoDropped+callback->captureGaps.load()
+            <<",\"audioLostSamples\":"<<state.audioSamplesDropped<<",\"errors\":"<<callback->errors.load()+callback->sendErrors.load()
+            <<",\"signal\":"<<(callback->signalPresent?"true":"false")<<",\"videoAgeMs\":"<<(videoArrival?now-videoArrival:-1)
+            <<",\"sendAgeMs\":"<<(sendFinished?now-sendFinished:-1)<<",\"sendBusyMs\":"<<(encoding?now-encoding:0)
+            <<",\"encodeMs\":"<<callback->lastEncodeMs<<",\"audioQueueMs\":"<<state.audioMs
+            <<",\"videoQueueMs\":"<<state.videoMs<<",\"connections\":"<<connections<<"}\n";
+        if(diagnostics)std::cout<<"Captured="<<callback->captured<<" sent="<<callback->sent<<" queue drops="<<state.videoDropped
+            <<" audio dropped samples="<<state.audioSamplesDropped<<" no signal="<<callback->noSignal<<" no delivery="<<callback->noDelivery
+            <<" capture errors="<<callback->errors<<" signal="<<(callback->signalPresent?1:0)<<" connections="<<connections<<"\n";
+    }
     input->StopStreams();input->SetCallback(nullptr);callback->finish();
+    if(callback->failed)throw std::runtime_error(callback->failureMessage());
 }
 void interactiveMenu(){
     for(;;){

@@ -41,7 +41,7 @@ internal static class ReconnectCheck
             IntPtr receiver = IntPtr.Zero;
             var toggle = (Button)form.Controls.Find("startButton", true)[0];
             var test = (Button)form.Controls.Find("testButton", true)[0];
-            var log = (TextBox)form.Controls.Find("logBox", true)[0];
+            var log = (TextBox)typeof(MainForm).GetField("logBox",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance)!.GetValue(form)!;
             var quality = (ComboBox)form.Controls.Find("qualityBox", true)[0];
             var mode = (ComboBox)form.Controls.Find("modeBox", true)[0];
             var device = (ComboBox)form.Controls.Find("deviceBox", true)[0];
@@ -50,8 +50,30 @@ internal static class ReconnectCheck
             {
                 await Until(() => test.Enabled, 10000, "Device enumeration");
                 if (mode.Items.Count != 6) throw new Exception("Expected six video modes");
+                if(args.Contains("--1080i50")) mode.SelectedItem="1080i50";
                 // Use the user's input and source name. The SDI source must match the saved mode.
                 if (device.SelectedIndex < 0) throw new Exception("No selected DeckLink input");
+                if(args.Contains("--ui"))
+                {
+                    await Task.Delay(2200);
+                    if(form.FormBorderStyle!=FormBorderStyle.FixedSingle || form.MaximizeBox)throw new Exception("Main window is not fixed");
+                    var originalSize=form.Size;
+                    var strips=new[]{(StatusStrip)form.Controls.Find("systemStrip",true)[0],(StatusStrip)form.Controls.Find("streamStrip",true)[0]};
+                    foreach(var strip in strips){
+                        if(strip.Items.Count!=6 || strip.Items.OfType<ToolStripStatusLabel>().Any(cell=>cell.IsOnOverflow))throw new Exception("Status cells missing or overflowing");
+                        if(strip.Bottom>form.ClientSize.Height)throw new Exception("Status strip clipped");
+                    }
+                    ((Button)form.Controls.Find("logButton",true)[0]).PerformClick();await Task.Delay(100);
+                    var diagnostics=form.OwnedForms.OfType<DiagnosticsForm>().Single();
+                    if(diagnostics.Controls.Find("logBox",true).Length!=1 || form.Size!=originalSize)throw new Exception("Diagnostics window/layout");
+                    using(var bitmap=new Bitmap(diagnostics.Width,diagnostics.Height)){diagnostics.DrawToBitmap(bitmap,new Rectangle(Point.Empty,diagnostics.Size));bitmap.Save(Path.Combine(Path.GetDirectoryName(resultPath)!,"diagnostics-window.png"));}
+                    diagnostics.Close();await Task.Delay(100);
+                    ((Button)form.Controls.Find("logButton",true)[0]).PerformClick();await Task.Delay(100);
+                    form.OwnedForms.OfType<DiagnosticsForm>().Single().Close();
+                    if(log.IsDisposed || form.Size!=originalSize)throw new Exception("Reopening diagnostics corrupted buffer/size");
+                    using(var bitmap=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,form.Size));bitmap.Save(Path.Combine(Path.GetDirectoryName(resultPath)!,"fixed-interface.png"));}
+                    report.Add("PASS: fixed main window, two aligned status strips, separate diagnostics open/close/reopen without resizing");return;
+                }
                 string? sourceAddress = null;
                 foreach (var setting in new[] { "Normal", "High", "Low", "High", "Low", "Normal" })
                 {
@@ -100,6 +122,27 @@ internal static class ReconnectCheck
                     }
                     if ((!audioOnly && videos < 30) || audios < 30) throw new Exception($"{setting}: receiver failed to reconnect; video={videos}, audio={audios}; {status.Text}\n{log.Text}");
                     if (!log.Text.Contains(" / " + setting + " / ")) throw new Exception("Sender quality argument mismatch");
+                    if (args.Contains("--health"))
+                    {
+                        await Task.Delay(3200);
+                        var system=(StatusStrip)form.Controls.Find("systemStrip",true)[0];
+                        var stream=(StatusStrip)form.Controls.Find("streamStrip",true)[0];
+                        if((system.Items[0].Text??"").EndsWith("—") || (system.Items[3].Text??"").EndsWith("—"))throw new Exception("Missing CPU metrics");
+                        if((stream.Items[3].Text??"").EndsWith("—") || (stream.Items[4].Text??"").EndsWith("—"))throw new Exception("Missing queue metrics");
+                        if(form.OwnedForms.OfType<DiagnosticsForm>().Any() || log.Text.Contains("Health=") || log.Text.Contains("Captured="))throw new Exception("Closed diagnostics produced detailed logs");
+                        report.Add("HEALTH: "+status.Text+"; "+string.Join("; ",system.Items.Cast<ToolStripItem>().Concat(stream.Items.Cast<ToolStripItem>()).Select(cell=>(cell.Text??"").Replace('\n',' '))));
+                        if(setting=="Normal"){
+                            var originalSize=form.Size;
+                            ((Button)form.Controls.Find("logButton",true)[0]).PerformClick();await Task.Delay(1500);
+                            var diagnostics=form.OwnedForms.OfType<DiagnosticsForm>().Single();
+                            if(!log.Text.Contains("Captured="))throw new Exception("Opening diagnostics did not enable logging");
+                            diagnostics.Close();await Task.Delay(500);
+                            int afterClose=Regex.Matches(log.Text,"Captured=").Count;await Task.Delay(1500);
+                            if(Regex.Matches(log.Text,"Captured=").Count!=afterClose || form.Size!=originalSize)throw new Exception("Closing diagnostics did not stop logging / changed size");
+                            if(!toggle.Enabled || !toggle.Text.StartsWith("Running"))throw new Exception("Closing diagnostics stopped capture");
+                            report.Add("PASS: diagnostics open/close during capture; detailed logging stops, main size and transmission retained");
+                        }
+                    }
                     bool discovered = false;
                     var addresses = omt_discovery_getaddresses(out int count);
                     for (int i = 0; i < count; i++)

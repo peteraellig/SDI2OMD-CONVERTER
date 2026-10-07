@@ -7,5 +7,5 @@
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\gui\SdiOmt.csproj" /></ItemGroup>
+  <ItemGroup><Compile Remove="HealthCheck.cs" /><ProjectReference Include="..\gui\SdiOmt.csproj" /></ItemGroup>
 </Project>

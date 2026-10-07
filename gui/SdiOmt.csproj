@@ -14,10 +14,10 @@
     <Authors>Peter Aellig</Authors>
     <Company>Peter Aellig</Company>
     <Copyright>Peter Aellig</Copyright>
-    <Version>1.0.0.7</Version>
-    <AssemblyVersion>1.0.0.7</AssemblyVersion>
-    <FileVersion>1.0.0.7</FileVersion>
-    <InformationalVersion>1.0.0.7</InformationalVersion>
+    <Version>1.0.0.8</Version>
+    <AssemblyVersion>1.0.0.8</AssemblyVersion>
+    <FileVersion>1.0.0.8</FileVersion>
+    <InformationalVersion>1.0.0.8</InformationalVersion>
     <ApplicationIcon>Branding\SDI.ico</ApplicationIcon>
     <PackageIcon>sdi-omt_logo.png</PackageIcon>
   </PropertyGroup>

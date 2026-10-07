@@ -70,3 +70,40 @@ The capture test requires a matching SDI source and a free input. Stop normal ap
 - Six mode choices, Help and version verified.
 - Current `signal` correctly distinguished from cumulative `no signal` count.
 - Screenshot rendered from the real Windows Forms application.
+
+## 1.0.0.8 overload handling (7 October 2026)
+
+- Native deterministic queue test passed: one fresh pending video, preserved audio through short stalls, bounded audio sample/packet capacity, age expiry after long stalls and worker wakeup on stop.
+- Health rollup test passed: startup counters separated, five-second deltas expire without further samples, new session and explicit reset.
+- Synthetic 720p50 Normal / Mono 1 loopback passed: 25 video frames and 25 audio packets, received audio samples checked.
+- Initial tests without a connected SDI source: six GUI-driven capture starts (Normal → High → Low → High → Low → Normal) with one persistent OMT receiver passed for audio packets; discovery succeeded after every start. Live health, hidden detailed logging and resource metrics were checked. No physical SDI input was connected: received audio may be silence, and physical video/real audio continuity was not validated.
+- Native capture in 720p50 and 1080i50 correctly reported no input, no captured video, and zero video-loss/error counters. DeckLink's device-status API reported 1080i50 even without connected input; active capture flags are used for live signal state.
+- Actual form rendered at 700/800 pixels with metrics inside the client area.
+
+Reproduce queue test using CMake/CTest (`ctest --test-dir build -C Release`). Health rollup: `dotnet run --project tests/HealthCheck.csproj -c Release`. GUI health integration: add `--health` to ReconnectCheck; use `--audio-only` only when explicitly checking packet reception without valid video. `--1080i50` temporarily selects that capture format. Settings are restored after the test. `--ui` renders the idle form without opening capture.
+
+The queue tests simulate delayed consumption without saturating the workstation. No claim is made about physical SDI continuity under CPU saturation, latency across the network, or vMix reception for this revision.
+
+## Local UI preview: fixed window and status strips (7 October 2026)
+
+- Main window uses a fixed border with maximizing disabled. Previous saved sizes/maximized state are ignored.
+- Two bottom StatusStrip controls, each with six aligned cells, passed overflow/client-area checks.
+- Separate DiagnosticsForm opens, closes and reopens with the log buffer preserved and the main size unchanged.
+- Live 720p50 GUI test passed six starts / five reconnects with one persistent OMT receiver (Normal → High → Low → High → Low → Normal), including video/audio metadata and discovery checks.
+- During both Normal phases, opening diagnostics enabled detailed Captured output. Closing stopped detailed output without stopping capture or changing main-window size. System and stream cells continued updating.
+- Frontend and test build completed with zero warnings/errors. Native encoder behavior is unchanged for this UI preview.
+- Initially verified as a local preview; the tested layout is included in the authorized 1.0.0.8 release.
+
+## Final 1.0.0.8 verification
+
+The connected 720p50 changing-picture source passed six starts and five reconnects with one persistent receiver. During both Normal phases, diagnostics were opened and closed: detailed logging stopped, transmission continued and window size remained fixed. All live counters were zero at the health checkpoints.
+
+| 30-second phase | Received video | Audio packets | Received timestamp gaps | Internal discarded video | Discarded audio | Errors |
+| --- | ---: | ---: | --- | ---: | ---: | ---: |
+| Normal | 1455 | 1455 | None | 1 | 0 | 0 |
+| High | 1495 | 1500 | None | 0 | 0 | 0 |
+| Low | 1495 | 1499 | None | 0 | 0 | 0 |
+
+Picture-data samples changed in every phase. All received audio samples were silent. These checks use a local OMT receiver and do not validate audible tone, remote/vMix reception or CPU saturation. The single internal Normal-phase discard caused no gap after the first received video frame; its exact time was not recorded. Encoder-process CPU averaged approximately 1.7% across logical processors. Send-call durations are not end-to-end latency measurements.
+
+The final compact layout includes the user's designer adjustments and left-aligned sender name. InitializeComponent uses standard individual control declarations, properties and event handlers; loops/factory helpers were removed. Runtime metrics/settings loading are suppressed in design mode. Build and rendered UI checks pass; the user subsequently edited the layout in Visual Studio and rebuilt it.

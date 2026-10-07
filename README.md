@@ -4,7 +4,7 @@
 
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D4.svg)
-![Version](https://img.shields.io/badge/version-1.0.0.7-green.svg)
+![Version](https://img.shields.io/badge/version-1.0.0.8-green.svg)
 
 ![SDI2OMD CONVERTER Windows interface](docs/images/interface.png)
 
@@ -27,7 +27,7 @@ A Windows application: select a DeckLink input, choose the matching video format
 | Mono | Any channel 1–8, duplicated to left and right |
 | Audio output | Stereo, 48 kHz, planar float |
 
-Settings are saved automatically. The Start/Stop toggle stays on the left; OMT self-test, Show list, Help and Exit are stacked on the right.
+Settings are saved automatically. The main window has a compact fixed size. Labels align left, input fields share a right edge, and action buttons align with the input rows. Current SDI/OMT status is centered in the black header. Two bottom status strips arrange system resources and recent stream health in aligned table cells. The Start/Stop toggle stays on the left; OMT self-test, Show list, Help and Exit are stacked on the right. Show list opens a separate diagnostics window with Close, like BM card info. Closing it disables detailed logging without stopping capture.
 
 **BM card info** opens a separate device-status window with signal detection,
 detected input format and capture/output use. It refreshes every two seconds
@@ -72,30 +72,21 @@ The selected input must be available, not occupied by another application.
 
 Start transmission toggles to Running — press to stop. It stays enabled while
 capturing; pressing it again stops the engine. Settings are locked while active.
-The current SDI signal state is shown while diagnostics are open. During capture
-with the list hidden, status updates, log updates and diagnostic counters are
-disabled. Help explains the limitations. Exit asks "Are you sure you want to exit?";
-confirmation stops any active transmission.
-Sender name, device name, video format, quality, audio selection and window size are saved under
+Live signal, recent losses and CPU/RAM refresh once per second. Detailed logging is disabled while the list is hidden. Help explains the limitations. Exit asks "Are you sure you want to exit?"; confirmation stops any active transmission.
+Sender name, device name, video format, quality, audio selection are saved under
 %LOCALAPPDATA%/SdiOmt/settings.json. Missing saved devices require reselection.
 
 ## Diagnostics
 
-The detailed list is hidden initially. Show list / Hide list toggles it.
+The detailed list window is closed initially. Show list opens or activates it. Its Close button (or window close) disables detailed logging.
 Errors reveal the list automatically; the current signal state stays visible.
-During capture, **Show list** enables diagnostic counting and output; **Hide list**
-disables them again without restarting capture. There is no continuous telemetry
-or card polling in the normal hidden-list capture path. BM card info is a separate,
-explicit request that polls only until its window is closed.
-Counters accumulate only while diagnostics are enabled; hidden intervals are skipped.
-No signal is a cumulative count of missing-input frames observed during those intervals.
-It does not mean signal is currently missing. At 50 fps, 28 frames = 0.56 seconds.
-No delivery counts zero-byte send results, which can mean no matching receiver
-or silent audio. Capture errors count failed frame access/callback processing.
-Network connections are TCP channels, not viewer counts; audio/video may use two.
-A bounded worker queue prevents network sending from blocking the capture callback.
-Stop uses stdin and releases DeckLink streams and OMT; if unresponsive, the frontend
-terminates only its child engine after a five-second timeout.
+CPU/RAM, capture/send health and queue state refresh once per second, including when the list is hidden. Detailed per-second log output is enabled only while the separate **Show list** window is open. BM card info remains a separate request and polls only until closed.
+
+Live losses and errors cover the **last five seconds** and expire automatically. The first two seconds of startup (up to the next telemetry sample) are recorded separately. Signal loss and a stalled encoder are shown immediately on the next health update, including during startup. Show list records session and startup totals. “Lost frames” covers replaced/expired queued pictures and gaps detected in SDI timestamps; it does not measure losses in receivers or across the network. “Audio gaps” reports locally discarded audio duration, not a receiver-side measurement.
+
+**Low latency under overload:** one pending video frame, always replaced by the freshest capture; separate audio buffer up to **120 ms**. Older audio is sent first using original timestamps. Queued video older than two frame periods and audio older than 120 ms are discarded. This prevents a growing backlog. An already running OMT encode/send call cannot be interrupted, so total end-to-end latency and uninterrupted audio cannot be guaranteed under sustained CPU starvation. See [queue design and failure behavior](docs/OVERLOAD.md).
+
+No delivery counts zero-byte sends, which can mean no matching receiver or silent audio. Network connections count TCP channels rather than viewers. Worker failures are caught and surfaced to the GUI; serious failures stop capture instead of silently leaving a dead sender. Stop discards pending data and releases DeckLink/OMT. If unresponsive, the frontend terminates only its child engine after five seconds.
 
 ## Network
 
@@ -111,17 +102,19 @@ private local subnet. It is never run automatically.
 
 Icon source: logo/SDI.ico, synchronized to gui/Branding/SDI.ico during build.
 Branding logo: logo/sdi-omt_logo.png; user-edited form logo is retained separately.
-Window title: SDI2OMD CONVERTER 1.0.0.7 | Peter Aellig.
+Window title: SDI2OMD CONVERTER 1.0.0.8 | Peter Aellig.
 
 Visual Studio -> Publish -> ClickOnce profile, or scripts/publish-clickonce.cmd.
 Build the C++ engine first after engine changes. Export: publish/ClickOnce/setup.exe.
 Distribute the entire ClickOnce folder, not just setup.exe.
-Version 1.0.0.7 is set in assembly metadata and the deployment manifest.
+Version 1.0.0.8 is set in assembly metadata and the deployment manifest.
 .NET runtime is included (self-contained x64); setup checks Visual C++ runtime.
 Blackmagic Desktop Video must be installed on capture workstations.
 Manifests are unsigned; publisher text does not constitute a verified signature.
 
 ## Verification
+
+Version 1.0.0.8 adds the bounded video/audio queue and live health displays. Queue/expiry tests, health-window tests and a 25-frame synthetic loopback passed. Live 720p50 capture passed six GUI-driven starts / five reconnects and 30 seconds each at Normal, High and Low with a changing test-picture source. Received timestamps had no video/audio gaps; one internal queued picture was discarded at Normal. The source supplied silent audio; audible sound under CPU saturation remains unverified.
 
 Version 1.0.0.5 adds interlaced capture and passed 18 sender starts with one
 persistent receiver, including High/Low quality changes. See [test details](docs/TESTING.md).
